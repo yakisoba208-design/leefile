@@ -1,4 +1,7 @@
-const nacl = require('tweetnacl');
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
@@ -6,79 +9,51 @@ exports.handler = async (event) => {
   }
 
   try {
-    const keyPair = nacl.box.keyPair();
-    const privateKey = Buffer.from(keyPair.secretKey).toString('base64');
-    const publicKey = Buffer.from(keyPair.publicKey).toString('base64');
+    const tmpDir = os.tmpdir();
+    const wgcfPath = path.join(tmpDir, 'wgcf');
+    const wgcfConfig = path.join(tmpDir, 'wgcf-account.toml');
+    const wgcfProfile = path.join(tmpDir, 'wgcf-profile.conf');
 
-    // Step 1: Register Account
-    const regResponse = await fetch('https://api.cloudflareclient.com/v0a884/reg', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'okhttp/3.12.1'
-      },
-      body: JSON.stringify({
-        key: publicKey,
-        install_id: '',
-        fcm_token: '',
-        tos: new Date().toISOString(),
-        type: 'Android',
-        locale: 'en_US'
-      })
-    });
+    // 1. Fetch the official WGCF Linux binary if it doesn't exist
+    if (!fs.existsSync(wgcfPath)) {
+      execSync(`curl -sSL https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64 -o ${wgcfPath}`);
+      fs.chmodSync(wgcfPath, '755');
+    }
 
-    if (!regResponse.ok) throw new Error('Cloudflare API rejected the initial registration');
+    // 2. Clean up any leftover profiles from previous serverless executions
+    if (fs.existsSync(wgcfConfig)) fs.unlinkSync(wgcfConfig);
+    if (fs.existsSync(wgcfProfile)) fs.unlinkSync(wgcfProfile);
+
+    // 3. Replicate vpn.bat logic: Register Identity
+    execSync(`${wgcfPath} register --accept-tos`, { cwd: tmpDir });
+
+    // 4. Replicate vpn.bat logic: Generate Profile
+    execSync(`${wgcfPath} generate`, { cwd: tmpDir });
+
+    // 5. Read the generated profile
+    let rawConfig = fs.readFileSync(wgcfProfile, 'utf8');
+
+    // 6. Inject the Myanmar DPI Bypass parameters
+    let modifiedConfig = rawConfig.replace(/Endpoint\s*=\s*.*/i, 'Endpoint = 162.159.195.1:500');
     
-    const regData = await regResponse.json();
-    const accountData = regData.result || regData;
-    const accountId = accountData.id;
-    const accountToken = accountData.token;
-
-    // Step 2: Enable WARP on the Account
-    const patchResponse = await fetch(`https://api.cloudflareclient.com/v0a884/reg/${accountId}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accountToken}`,
-        'User-Agent': 'okhttp/3.12.1'
-      },
-      body: JSON.stringify({
-        warp_enabled: true
-      })
-    });
-
-    if (!patchResponse.ok) throw new Error('Cloudflare API failed to enable WARP');
-    
-    const patchData = await patchResponse.json();
-    const finalData = patchData.result || patchData;
-
-    const v4 = finalData.config.interface.addresses.v4;
-    const v6 = finalData.config.interface.addresses.v6;
-    const peerPubKey = finalData.config.peers[0].public_key;
-
-    const configString = `
-[Interface]
-PrivateKey = ${privateKey}
-Address = ${v4}/32, ${v6}/128
-DNS = 1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001
-MTU = 1280
-
-[Peer]
-PublicKey = ${peerPubKey}
-AllowedIPs = 0.0.0.0/0, ::/0
-Endpoint = 162.159.195.1:500
-`.trim();
+    // Add MTU 1280 and Keepalive for cellular stability
+    if (!modifiedConfig.includes('MTU')) {
+        modifiedConfig = modifiedConfig.replace('[Interface]', '[Interface]\nMTU = 1280');
+    }
+    if (!modifiedConfig.includes('PersistentKeepalive')) {
+        modifiedConfig = modifiedConfig.replace('[Peer]', '[Peer]\nPersistentKeepalive = 20');
+    }
 
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ config: configString })
+      body: JSON.stringify({ config: modifiedConfig.trim() })
     };
   } catch (error) {
     return {
       statusCode: 500,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ error: error.message })
+      body: JSON.stringify({ error: error.message || 'Failed to execute native WGCF binary' })
     };
   }
 };

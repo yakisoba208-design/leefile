@@ -73,7 +73,7 @@ MTU = 1280
 [Peer]
 PublicKey = ${peerPubKey}
 AllowedIPs = 0.0.0.0/0, ::/0
-Endpoint = 162.159.195.1:500
+Endpoint = engage.cloudflareclient.com:2408
 PersistentKeepalive = 25
 `.trim();
 

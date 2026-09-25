@@ -32,35 +32,18 @@ module.exports = async function handler(req, res) {
     const v6 = data.config.interface.addresses.v6;
     const peerPubKey = data.config.peers[0].public_key;
 
-    // Advanced Clean IP & Port Randomizer for DPI Bypass
-    const cleanIPs = [
-      '162.159.192.1', '162.159.193.5', '162.159.195.10', 
-      '188.114.97.6', '188.114.96.2', '8.6.112.202', '8.6.112.121'
-    ];
-    const cleanPorts = [500, 854, 878, 894, 908, 1074, 1701, 2408, 3138, 4198, 7103, 7281, 8854];
-    
-    const randomIP = cleanIPs[Math.floor(Math.random() * cleanIPs.length)];
-    const randomPort = cleanPorts[Math.floor(Math.random() * cleanPorts.length)];
-    const cleanEndpoint = `${randomIP}:${randomPort}`;
-
+    // Strict formatting matching the working AmneziaWG screenshot
     const configString = `
-# ==========================================
-# Vortex Digital Myanmar
-# Supported: AmneziaWG (WARP Bypass)
-# ==========================================
 [Interface]
 PrivateKey = ${privateKey}
 Address = ${v4}/32, ${v6}/128
-DNS = 1.1.1.1, 1.0.0.1
+DNS = 1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001
 MTU = 1280
-Jc = 4
-Jmin = 40
-Jmax = 70
 
 [Peer]
 PublicKey = ${peerPubKey}
 AllowedIPs = 0.0.0.0/0, ::/0
-Endpoint = ${cleanEndpoint}
+Endpoint = 162.159.195.1:500
 `.trim();
 
     res.status(200).json({ config: configString });

@@ -1,7 +1,4 @@
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const nacl = require('tweetnacl');
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
@@ -9,51 +6,90 @@ exports.handler = async (event) => {
   }
 
   try {
-    const tmpDir = os.tmpdir();
-    const wgcfPath = path.join(tmpDir, 'wgcf');
-    const wgcfConfig = path.join(tmpDir, 'wgcf-account.toml');
-    const wgcfProfile = path.join(tmpDir, 'wgcf-profile.conf');
-
-    // 1. Fetch the official WGCF Linux binary if it doesn't exist
-    if (!fs.existsSync(wgcfPath)) {
-      execSync(`curl -sSL https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64 -o ${wgcfPath}`);
-      fs.chmodSync(wgcfPath, '755');
-    }
-
-    // 2. Clean up any leftover profiles from previous serverless executions
-    if (fs.existsSync(wgcfConfig)) fs.unlinkSync(wgcfConfig);
-    if (fs.existsSync(wgcfProfile)) fs.unlinkSync(wgcfProfile);
-
-    // 3. Replicate vpn.bat logic: Register Identity
-    execSync(`${wgcfPath} register --accept-tos`, { cwd: tmpDir });
-
-    // 4. Replicate vpn.bat logic: Generate Profile
-    execSync(`${wgcfPath} generate`, { cwd: tmpDir });
-
-    // 5. Read the generated profile
-    let rawConfig = fs.readFileSync(wgcfProfile, 'utf8');
-
-    // 6. Inject the Myanmar DPI Bypass parameters
-    let modifiedConfig = rawConfig.replace(/Endpoint\s*=\s*.*/i, 'Endpoint = 162.159.195.1:500');
+    // 1. Generate and mathematically clamp the Curve25519 Private Key
+    const secretKey = nacl.randomBytes(32);
+    secretKey[0] &= 248;
+    secretKey[31] &= 127;
+    secretKey[31] |= 64;
     
-    // Add MTU 1280 and Keepalive for cellular stability
-    if (!modifiedConfig.includes('MTU')) {
-        modifiedConfig = modifiedConfig.replace('[Interface]', '[Interface]\nMTU = 1280');
-    }
-    if (!modifiedConfig.includes('PersistentKeepalive')) {
-        modifiedConfig = modifiedConfig.replace('[Peer]', '[Peer]\nPersistentKeepalive = 20');
-    }
+    const keyPair = nacl.box.keyPair.fromSecretKey(secretKey);
+    const privateKey = Buffer.from(keyPair.secretKey).toString('base64');
+    const publicKey = Buffer.from(keyPair.publicKey).toString('base64');
+
+    const cfHeaders = {
+      'Content-Type': 'application/json',
+      'User-Agent': 'okhttp/3.12.1',
+      'CF-Client-Version': 'a-6.11-2223'
+    };
+
+    // 2. Register Account
+    const regResponse = await fetch('https://api.cloudflareclient.com/v0a884/reg', {
+      method: 'POST',
+      headers: cfHeaders,
+      body: JSON.stringify({
+        key: publicKey,
+        install_id: '',
+        fcm_token: '',
+        tos: new Date().toISOString(),
+        type: 'Android',
+        locale: 'en_US'
+      })
+    });
+
+    if (!regResponse.ok) throw new Error('Cloudflare API rejected registration');
+    
+    const regData = await regResponse.json();
+    const accountData = regData.result || regData;
+    const accountId = accountData.id;
+    const accountToken = accountData.token;
+
+    // 3. Enable WARP (Patch Request)
+    const patchResponse = await fetch(`https://api.cloudflareclient.com/v0a884/reg/${accountId}`, {
+      method: 'PATCH',
+      headers: {
+        ...cfHeaders,
+        'Authorization': `Bearer ${accountToken}`
+      },
+      body: JSON.stringify({ warp_enabled: true })
+    });
+
+    if (!patchResponse.ok) throw new Error('Cloudflare API failed to enable WARP');
+    
+    const patchData = await patchResponse.json();
+    const finalData = patchData.result || patchData;
+
+    const v4 = finalData.config.interface.addresses.v4;
+    const v6 = finalData.config.interface.addresses.v6;
+    const peerPubKey = finalData.config.peers[0].public_key;
+
+    // 4. Construct config exactly matching the working MTTK3 profile
+    const configString = `
+# ==========================================
+# Vortex Digital Myanmar
+# Supported: WireGuard & AmneziaWG
+# ==========================================
+[Interface]
+PrivateKey = ${privateKey}
+Address = ${v4}/32, ${v6}/128
+DNS = 1.1.1.1, 1.0.0.1
+MTU = 1280
+
+[Peer]
+PublicKey = ${peerPubKey}
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = 162.159.195.1:500
+`.trim();
 
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ config: modifiedConfig.trim() })
+      body: JSON.stringify({ config: configString })
     };
   } catch (error) {
     return {
       statusCode: 500,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ error: error.message || 'Failed to execute native WGCF binary' })
+      body: JSON.stringify({ error: error.message })
     };
   }
 };

@@ -6,7 +6,6 @@ exports.handler = async (event) => {
   }
 
   try {
-    // 1. Generate and mathematically clamp the Curve25519 Private Key
     const secretKey = nacl.randomBytes(32);
     secretKey[0] &= 248;
     secretKey[31] &= 127;
@@ -22,7 +21,6 @@ exports.handler = async (event) => {
       'CF-Client-Version': 'a-6.11-2223'
     };
 
-    // 2. Register Account
     const regResponse = await fetch('https://api.cloudflareclient.com/v0a884/reg', {
       method: 'POST',
       headers: cfHeaders,
@@ -43,7 +41,6 @@ exports.handler = async (event) => {
     const accountId = accountData.id;
     const accountToken = accountData.token;
 
-    // 3. Enable WARP (Patch Request)
     const patchResponse = await fetch(`https://api.cloudflareclient.com/v0a884/reg/${accountId}`, {
       method: 'PATCH',
       headers: {
@@ -62,7 +59,6 @@ exports.handler = async (event) => {
     const v6 = finalData.config.interface.addresses.v6;
     const peerPubKey = finalData.config.peers[0].public_key;
 
-    // 4. Construct config exactly matching the working MTTK3 profile
     const configString = `
 # ==========================================
 # Vortex Digital Myanmar
@@ -78,6 +74,7 @@ MTU = 1280
 PublicKey = ${peerPubKey}
 AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = 162.159.195.1:500
+PersistentKeepalive = 25
 `.trim();
 
     return {

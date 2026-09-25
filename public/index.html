@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vortex Digital Myanmar - Auto Builder</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body class="bg-black text-gray-100 min-h-screen flex items-center justify-center p-6 font-sans">
+
+  <div class="max-w-md w-full border border-teal-800 bg-gray-900 rounded-2xl p-8 shadow-[0_0_20px_rgba(20,184,166,0.15)] text-center">
+    <h1 class="text-2xl font-bold text-teal-400 mb-2">Vortex Digital Myanmar</h1>
+    <p class="text-sm text-gray-400 mb-8">WireGuard & AmneziaWG Config Generator</p>
+
+    <div class="mb-6">
+      <input type="text" id="fileName" placeholder="Enter Profile Name (Optional)" 
+             class="w-full bg-black border border-teal-900 text-teal-100 rounded-lg px-4 py-3 focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400 transition-colors">
+    </div>
+
+    <button id="genBtn" onclick="generateConfig()" 
+            class="w-full bg-teal-600 hover:bg-teal-500 text-black font-semibold rounded-lg px-4 py-3 transition-colors">
+      Generate & Download
+    </button>
+
+    <p id="status" class="text-sm mt-4 min-h-[1.25rem] text-teal-300"></p>
+
+    <div id="qrContainer" class="mt-8 hidden flex-col items-center">
+      <div class="bg-white p-3 rounded-lg">
+        <div id="qrCode"></div>
+      </div>
+      <p class="text-xs text-gray-400 mt-3">Scan with WireGuard app to connect</p>
+    </div>
+  </div>
+
+  <script>
+    async function generateConfig() {
+      const btn = document.getElementById('genBtn');
+      const status = document.getElementById('status');
+      const qrContainer = document.getElementById('qrContainer');
+      const fileNameInput = document.getElementById('fileName').value.trim();
+      const fileName = fileNameInput ? `${fileNameInput}.conf` : 'Vortex_Digital_Myanmar.conf';
+
+      btn.disabled = true;
+      btn.classList.replace('bg-teal-600', 'bg-teal-900');
+      btn.innerText = 'Communicating with Cloudflare...';
+      status.innerText = '';
+      status.classList.replace('text-red-400', 'text-teal-300');
+      qrContainer.classList.add('hidden');
+      
+      try {
+        const res = await fetch('/api/generate', { method: 'POST' });
+        const data = await res.json();
+        
+        if(!res.ok) throw new Error(data.error || 'API Generation Failed');
+        
+        const blob = new Blob([data.config], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        document.getElementById('qrCode').innerHTML = '';
+        new QRCode(document.getElementById('qrCode'), {
+          text: data.config,
+          width: 200,
+          height: 200,
+          colorDark : "#000000",
+          colorLight : "#ffffff",
+          correctLevel : QRCode.CorrectLevel.M
+        });
+        
+        qrContainer.classList.replace('hidden', 'flex');
+        status.innerText = 'Success! File downloaded.';
+      } catch (err) {
+        status.classList.replace('text-teal-300', 'text-red-400');
+        status.innerText = 'Error: ' + err.message;
+      }
+
+      btn.disabled = false;
+      btn.classList.replace('bg-teal-900', 'bg-teal-600');
+      btn.innerText = 'Generate & Download';
+    }
+  </script>
+</body>
+</html>

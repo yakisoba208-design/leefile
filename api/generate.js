@@ -8,7 +8,8 @@ module.exports = async function handler(req, res) {
     const privateKey = Buffer.from(keyPair.secretKey).toString('base64');
     const publicKey = Buffer.from(keyPair.publicKey).toString('base64');
 
-    const response = await fetch('https://api.cloudflareclient.com/v0a884/reg', {
+    // Step 1: Register Account
+    const regResponse = await fetch('https://api.cloudflareclient.com/v0a884/reg', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -19,20 +20,40 @@ module.exports = async function handler(req, res) {
         install_id: '',
         fcm_token: '',
         tos: new Date().toISOString(),
-        model: 'Android',
-        serial_number: '',
+        type: 'Android',
         locale: 'en_US'
       })
     });
 
-    if (!response.ok) throw new Error('Cloudflare API rejected the registration');
+    if (!regResponse.ok) throw new Error('Cloudflare API rejected the initial registration');
     
-    const data = await response.json();
-    const v4 = data.config.interface.addresses.v4;
-    const v6 = data.config.interface.addresses.v6;
-    const peerPubKey = data.config.peers[0].public_key;
+    const regData = await regResponse.json();
+    const accountData = regData.result || regData;
+    const accountId = accountData.id;
+    const accountToken = accountData.token;
 
-    // Strict formatting matching the working AmneziaWG screenshot
+    // Step 2: Enable WARP on the Account
+    const patchResponse = await fetch(`https://api.cloudflareclient.com/v0a884/reg/${accountId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accountToken}`,
+        'User-Agent': 'okhttp/3.12.1'
+      },
+      body: JSON.stringify({
+        warp_enabled: true
+      })
+    });
+
+    if (!patchResponse.ok) throw new Error('Cloudflare API failed to enable WARP');
+    
+    const patchData = await patchResponse.json();
+    const finalData = patchData.result || patchData;
+
+    const v4 = finalData.config.interface.addresses.v4;
+    const v6 = finalData.config.interface.addresses.v6;
+    const peerPubKey = finalData.config.peers[0].public_key;
+
     const configString = `
 [Interface]
 PrivateKey = ${privateKey}

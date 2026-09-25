@@ -1,50 +1,85 @@
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const nacl = require('tweetnacl');
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
   try {
-    const tmpDir = os.tmpdir();
-    const wgcfPath = path.join(tmpDir, 'wgcf');
-    const wgcfConfig = path.join(tmpDir, 'wgcf-account.toml');
-    const wgcfProfile = path.join(tmpDir, 'wgcf-profile.conf');
+    // 1. Generate and mathematically clamp the Curve25519 Private Key
+    const secretKey = nacl.randomBytes(32);
+    secretKey[0] &= 248;
+    secretKey[31] &= 127;
+    secretKey[31] |= 64;
+    
+    const keyPair = nacl.box.keyPair.fromSecretKey(secretKey);
+    const privateKey = Buffer.from(keyPair.secretKey).toString('base64');
+    const publicKey = Buffer.from(keyPair.publicKey).toString('base64');
 
-    // 1. Fetch the correct architecture WGCF binary
-    if (!fs.existsSync(wgcfPath)) {
-      const arch = os.arch() === 'arm64' ? 'linux_arm64' : 'linux_amd64';
-      execSync(`curl -sSL https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_${arch} -o ${wgcfPath}`);
-      fs.chmodSync(wgcfPath, '755');
-    }
+    const cfHeaders = {
+      'Content-Type': 'application/json',
+      'User-Agent': 'okhttp/3.12.1',
+      'CF-Client-Version': 'a-6.11-2223'
+    };
 
-    // 2. Clear previous session data to ensure a fresh keypair
-    if (fs.existsSync(wgcfConfig)) fs.unlinkSync(wgcfConfig);
-    if (fs.existsSync(wgcfProfile)) fs.unlinkSync(wgcfProfile);
+    // 2. Register Account
+    const regResponse = await fetch('https://api.cloudflareclient.com/v0a884/reg', {
+      method: 'POST',
+      headers: cfHeaders,
+      body: JSON.stringify({
+        key: publicKey,
+        install_id: '',
+        fcm_token: '',
+        tos: new Date().toISOString(),
+        type: 'Android',
+        locale: 'en_US'
+      })
+    });
 
-    // 3. Register identity and generate profile exactly like vpn.bat
-    execSync(`${wgcfPath} register --accept-tos`, { cwd: tmpDir, stdio: 'ignore' });
-    execSync(`${wgcfPath} generate`, { cwd: tmpDir, stdio: 'ignore' });
+    if (!regResponse.ok) throw new Error('Cloudflare API rejected registration');
+    
+    const regData = await regResponse.json();
+    const accountData = regData.result || regData;
+    const accountId = accountData.id;
+    const accountToken = accountData.token;
 
-    // 4. Read the raw WGCF profile
-    const rawConfig = fs.readFileSync(wgcfProfile, 'utf8');
+    // 3. Enable WARP (Patch Request)
+    const patchResponse = await fetch(`https://api.cloudflareclient.com/v0a884/reg/${accountId}`, {
+      method: 'PATCH',
+      headers: {
+        ...cfHeaders,
+        'Authorization': `Bearer ${accountToken}`
+      },
+      body: JSON.stringify({ warp_enabled: true })
+    });
 
-    // 5. Apply the exact Regex endpoint replacement used in vpn.bat
-    const modifiedConfig = rawConfig.replace(/(?i)Endpoint\s*=\s*.*/, 'Endpoint = 162.159.192.1:500');
+    if (!patchResponse.ok) throw new Error('Cloudflare API failed to enable WARP');
+    
+    const patchData = await patchResponse.json();
+    const finalData = patchData.result || patchData;
 
-    // 6. Prepend the exact Brand Header from vpn.bat
-    const brandHeader = `
+    const v4 = finalData.config.interface.addresses.v4;
+    const v6 = finalData.config.interface.addresses.v6;
+    const peerPubKey = finalData.config.peers[0].public_key;
+
+    // 4. Construct config exactly matching the working MTTK3 profile
+    const configString = `
 # ==========================================
 # Vortex Digital Myanmar
 # Supported: WireGuard & AmneziaWG
 # ==========================================
-`.trimStart();
+[Interface]
+PrivateKey = ${privateKey}
+Address = ${v4}/32, ${v6}/128
+DNS = 1.1.1.1, 1.0.0.1
+MTU = 1280
 
-    const finalVpnConfig = brandHeader + modifiedConfig;
+[Peer]
+PublicKey = ${peerPubKey}
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = 162.159.195.1:500
+`.trim();
 
-    res.status(200).json({ config: finalVpnConfig });
+    res.status(200).json({ config: configString });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'WGCF execution failed' });
+    res.status(500).json({ error: error.message });
   }
 };

@@ -32,6 +32,14 @@ module.exports = async function handler(req, res) {
     const v6 = data.config.interface.addresses.v6;
     const peerPubKey = data.config.peers[0].public_key;
 
+    // Clean IP and Port Randomizer for Myanmar Bypass
+    const cleanIPs = ['162.159.192', '162.159.193', '162.159.195', '162.159.197', '188.114.96', '188.114.97'];
+    const cleanPorts = [500, 854, 894, 908, 1074, 1701, 2408, 3138, 4198, 7103, 8854];
+    
+    const randomIP = `${cleanIPs[Math.floor(Math.random() * cleanIPs.length)]}.${Math.floor(Math.random() * 250) + 1}`;
+    const randomPort = cleanPorts[Math.floor(Math.random() * cleanPorts.length)];
+    const cleanEndpoint = `${randomIP}:${randomPort}`;
+
     const configString = `
 # ==========================================
 # Vortex Digital Myanmar
@@ -46,7 +54,7 @@ MTU = 1280
 [Peer]
 PublicKey = ${peerPubKey}
 AllowedIPs = 0.0.0.0/0, ::/0
-Endpoint = 162.159.192.1:500
+Endpoint = ${cleanEndpoint}
 `.trim();
 
     res.status(200).json({ config: configString });

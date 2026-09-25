@@ -34,24 +34,30 @@ exports.handler = async (event) => {
     const v6 = data.config.interface.addresses.v6;
     const peerPubKey = data.config.peers[0].public_key;
 
-    // Clean IP and Port Randomizer for Myanmar Bypass
-    const cleanIPs = ['162.159.192', '162.159.193', '162.159.195', '162.159.197', '188.114.96', '188.114.97'];
-    const cleanPorts = [500, 854, 894, 908, 1074, 1701, 2408, 3138, 4198, 7103, 8854];
+    // Advanced Clean IP & Port Randomizer for DPI Bypass
+    const cleanIPs = [
+      '162.159.192.1', '162.159.193.5', '162.159.195.10', 
+      '188.114.97.6', '188.114.96.2', '8.6.112.202', '8.6.112.121'
+    ];
+    const cleanPorts = [500, 854, 878, 894, 908, 1074, 1701, 2408, 3138, 4198, 7103, 7281, 8854];
     
-    const randomIP = `${cleanIPs[Math.floor(Math.random() * cleanIPs.length)]}.${Math.floor(Math.random() * 250) + 1}`;
+    const randomIP = cleanIPs[Math.floor(Math.random() * cleanIPs.length)];
     const randomPort = cleanPorts[Math.floor(Math.random() * cleanPorts.length)];
     const cleanEndpoint = `${randomIP}:${randomPort}`;
 
     const configString = `
 # ==========================================
 # Vortex Digital Myanmar
-# Supported: WireGuard & AmneziaWG
+# Supported: AmneziaWG (WARP Bypass)
 # ==========================================
 [Interface]
 PrivateKey = ${privateKey}
 Address = ${v4}/32, ${v6}/128
 DNS = 1.1.1.1, 1.0.0.1
 MTU = 1280
+Jc = 4
+Jmin = 40
+Jmax = 70
 
 [Peer]
 PublicKey = ${peerPubKey}
